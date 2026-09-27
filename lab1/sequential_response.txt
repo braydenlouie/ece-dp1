@@ -1,0 +1,486 @@
+# FSM Design for Detecting Pattern `00010111`
+
+## Preliminary Analysis
+
+The pattern to detect is: `0 0 0 1 0 1 1 1`
+
+Bits are received serially, one per clock cycle, MSB first (bit 0 = `0`, bit 1 = `0`, ..., bit 7 = `1`).
+
+---
+
+# Part 1: Non-Overlapping Sequence Detector
+
+## State Definitions
+
+| State | Meaning |
+|-------|---------|
+| **S0** | Initial/idle state. No bits of the pattern matched yet. Also the reset state and the state returned to after a successful detection. |
+| **S1** | Received `0`. Matches pattern bit 0. |
+| **S2** | Received `00`. Matches pattern bits 0–1. |
+| **S3** | Received `000`. Matches pattern bits 0–2. |
+| **S4** | Received `0001`. Matches pattern bits 0–3. |
+| **S5** | Received `00010`. Matches pattern bits 0–4. |
+| **S6** | Received `000101`. Matches pattern bits 0–5. |
+| **S7** | Received `0001011`. Matches pattern bits 0–6. |
+| **S8** | Received `00010111`. Full pattern detected! **Z=1** in this state. |
+
+## Transition Logic (Non-Overlapping)
+
+For the **non-overlapping** detector, once the full pattern is detected (state S8), the FSM returns to **S0** unconditionally. This means no bits from the just-detected sequence are reused as the beginning of a new sequence.
+
+For incomplete matches (when a wrong bit arrives), we must determine the longest **suffix** of the bits consumed so far that matches a **prefix** of the target pattern. This is the standard approach for sequence detectors.
+
+**Target pattern:** `P = 0 0 0 1 0 1 1 1`
+
+### Detailed Transition Analysis
+
+#### From S0 (matched: "")
+- **X=0:** `0` matches P[0]=0 → **S1**
+- **X=1:** `1` doesn't match P[0] → **S0**
+
+#### From S1 (matched: "0")
+- **X=0:** `00` matches P[0..1] → **S2**
+- **X=1:** `01` — no suffix of `01` matches a prefix of P (prefix `0` doesn't match suffix `1`; `01` doesn't match `00`) → **S0**
+
+#### From S2 (matched: "00")
+- **X=0:** `000` matches P[0..2] → **S3**
+- **X=1:** `001` — check suffixes: `1`→ no match with `0`; `01`→ no; `001`→ no → **S0**
+
+#### From S3 (matched: "000")
+- **X=0:** `0000` — P[3]=1, mismatch. Check suffixes: `0`→ matches P[0]; `00`→ matches P[0..1]; `000`→ matches P[0..2]. Longest = `000` → **S3**
+- **X=1:** `0001` matches P[0..3] → **S4**
+
+#### From S4 (matched: "0001")
+- **X=0:** `00010` matches P[0..4] → **S5**
+- **X=1:** `00011` — P[4]=0, mismatch. Check suffixes: `1`→ no; `11`→ no; `011`→ no; `0011`→ no → **S0**
+
+#### From S5 (matched: "00010")
+- **X=0:** `000100` — P[5]=1, mismatch. Check suffixes of `000100`: `0`→ matches P[0]; `00`→ matches P[0..1]; `100`→ no; `0100`→ no; `00100`→ no. Longest = `00` → **S2**
+- **X=1:** `000101` matches P[0..5] → **S6**
+
+#### From S6 (matched: "000101")
+- **X=0:** `0001010` — P[6]=1, mismatch. Check suffixes of `0001010`: `0`→ matches P[0]; `10`→ no; `010`→ no; `1010`→ no; `01010`→ no; `001010`→ no. Longest = `0` → **S1**
+- **X=1:** `0001011` matches P[0..6] → **S7**
+
+#### From S7 (matched: "0001011")
+- **X=0:** `00010110` — P[7]=1, mismatch. Check suffixes of `00010110`: `0`→ matches P[0]; `10`→ no; `110`→ no; `0110`→ no; `10110`→ no; `010110`→ no; `0010110`→ no. Longest = `0` → **S1**
+- **X=1:** `00010111` matches P[0..7] → **S8** (Z=1)
+
+#### From S8 (Non-Overlapping — no bit reuse)
+After detection, go to S0 **regardless** of input. But we must still process the current bit properly since S8 is a Mealy-style output state. Actually, let me reconsider — S8 is reached when the 8th bit matches. The output Z=1 happens in S8. On the **next** clock edge, the FSM reads the next bit.
+
+Wait — let me reclarify the timing. The problem says "Z=1 should happen on the same clock cycle that the pattern is detected." This means when the 8th bit (the final `1`) is clocked in and the FSM transitions to S8, Z should be 1.
+
+**Mealy interpretation:** Z=1 on the transition into S8 (i.e., when in S7 and X=1). In this case, S8 isn't really needed — we can make Z a function of current state and input.
+
+**Moore interpretation:** Z=1 is the output of state S8. The FSM enters S8, Z=1 for that clock cycle, then transitions out.
+
+Given "Z=1 should happen on the same clock cycle that the pattern is detected" and "Z=1 is held for exactly one clock cycle," a **Mealy machine** is most natural. However, we can also use a Moore machine with S8 as a detection state.
+
+I'll use the **Moore machine** approach with S8 as the detection state (Z=1 only in S8), since it's cleaner to draw and the problem says "held for exactly one clock cycle."
+
+**From S8 (non-overlapping):**
+
+In S8, the pattern has just been fully detected. For non-overlapping detection, we **discard** all bits of the detected sequence (no reuse). On the next clock edge:
+
+- **X=0:** The new bit `0` could start a new pattern → **S1**
+- **X=1:** `1` doesn't match P[0]=0 → **S0**
+
+This is exactly the same as transitions from S0 — because we're starting fresh. So effectively S8 behaves like S0 for transitions (but with Z=1 output).
+
+Actually, for a pure non-overlapping detector, after detection we go to S0 and process from scratch. Since S8 has the same transitions as S0 (just different output), this works.
+
+## FSM Diagram (Non-Overlapping)
+
+```
+                    ┌───┐
+                    │   │ X=1
+                    ▼   │
+    ┌──────────────[S0]─┘
+    │ X=0          Z=0
+    ▼
+   [S1]──X=1──→[S0]
+    │ X=0        
+    ▼            
+   [S2]──X=1──→[S0]
+    │ X=0        
+    ▼            
+   [S3]──X=1──→[S4]
+    │ X=0        │ X=0
+    │            ▼
+    └──→[S3]   [S5]──X=0──→[S2]
+    (self)      │ X=1
+                ▼
+              [S6]──X=0──→[S1]
+                │ X=1
+                ▼
+              [S7]──X=0──→[S1]
+                │ X=1
+                ▼
+              [S8]  ← Z=1
+               │ X=0 → S1
+               │ X=1 → S0
+```
+
+### Complete FSM Diagram Description:
+
+```
+         X=1                    X=1
+    ┌──────────┐           ┌──────────┐
+    │          │           │          │
+    │    ┌─────┴───┐  X=0  │  ┌───────┴──┐  X=0   ┌──────────┐  X=0   ┌──────────┐
+    └───►│ S0 Z=0  ├──────►│  │ S1  Z=0  ├───────►│ S2  Z=0  ├──────►│ S3  Z=0  │◄─┐
+         └─────▲───┘       │  └───▲───▲──┘        └──▲───────┘       └──┬───┬───┘  │
+               │           │      │   │               │                  │   │      │
+               │    X=1    │      │   │        X=0    │          X=0     │   │ X=1  │
+               ├───────────┘      │   ├───────────────┘                  │   └──────┘
+               │                  │   │                                  │     
+               │           X=0   │   │ X=0                        X=1   │
+               │          ┌──────┘   └────────┐                         │
+               │          │                   │                         ▼
+         ┌─────┴───┐      │  ┌────────┐  X=1  │  ┌────────┐  X=1  ┌────────┐
+         │ S8 Z=1  │◄─X=1─┤  │ S7 Z=0├───────┤  │ S6 Z=0│◄──────┤ S5 Z=0│
+         └─────┬───┘      │  └────────┘       │  └──┬─────┘       └──┬─────┘
+               │          │                   │     │                 │
+               │ X=1      │                   │     │ X=0             │ X=0
+               └──────────┴───────────────────┘     └──→S1            └──→S2
+                         → S0
+```
+
+Let me present this more clearly as a text-based diagram:
+
+```
+                         X=1 (loop)
+                        ┌──────┐
+                        │      ▼
+    Reset ──────────► [ S0 ] (Z=0)
+                        │
+                        │ X=0
+                        ▼
+                      [ S1 ] (Z=0) ──── X=1 ────► [ S0 ]
+                        │
+                        │ X=0
+                        ▼
+                      [ S2 ] (Z=0) ──── X=1 ────► [ S0 ]
+                        │
+                        │ X=0
+                        ▼              X=0
+                      [ S3 ] (Z=0) ◄──────┐
+                        │                  │
+                        │ X=1              │(self-loop)
+                        ▼
+                      [ S4 ] (Z=0) ──── X=1 ────► [ S0 ]
+                        │
+                        │ X=0
+                        ▼
+                      [ S5 ] (Z=0) ──── X=0 ────► [ S2 ]
+                        │
+                        │ X=1
+                        ▼
+                      [ S6 ] (Z=0) ──── X=0 ────► [ S1 ]
+                        │
+                        │ X=1
+                        ▼
+                      [ S7 ] (Z=0) ──── X=0 ────► [ S1 ]
+                        │
+                        │ X=1
+                        ▼
+                      [ S8 ] (Z=1) ──── X=0 ────► [ S1 ]
+                            │
+                            │ X=1
+                            ▼
+                          [ S0 ]
+```
+
+## Complete State Table (Non-Overlapping)
+
+| Current State | Bits Matched | X=0 Next State | X=1 Next State | Z |
+|:---:|:---|:---:|:---:|:---:|
+| **S0** | None | S1 | S0 | 0 |
+| **S1** | `0` | S2 | S0 | 0 |
+| **S2** | `00` | S3 | S0 | 0 |
+| **S3** | `000` | S3 | S4 | 0 |
+| **S4** | `0001` | S5 | S0 | 0 |
+| **S5** | `00010` | S2 | S6 | 0 |
+| **S6** | `000101` | S1 | S7 | 0 |
+| **S7** | `0001011` | S1 | S8 | 0 |
+| **S8** | `00010111` (detected!) | S1 | S0 | **1** |
+
+## Explanation
+
+### What each state represents:
+- **S0:** No progress toward detecting the pattern. The FSM is waiting for the first `0`.
+- **S1–S7:** The FSM has matched the first 1 through 7 bits of the target pattern `00010111` respectively. Each state represents incremental progress.
+- **S8:** The complete 8-bit pattern has been detected. This is the only state where Z=1.
+
+### When Z becomes 1 and why it stays high for exactly one clock cycle:
+Z=1 **only** in state S8. The FSM arrives at S8 on the clock edge where the 8th and final bit (`1`) is received while in S7. On that same clock cycle, Z is asserted. On the **very next** clock edge, the FSM transitions out of S8 (to either S0 or S1), and Z returns to 0. Since the FSM spends exactly one clock cycle in S8, Z=1 for exactly one clock cycle.
+
+### How the FSM prevents bit reuse (non-overlapping):
+After detection (S8), the FSM transitions as if it were in **S0**. This means:
+- It does **not** carry forward any suffix of the detected sequence as a potential prefix of a new match.
+- The only consideration is the single new bit arriving at S8. If it's `0`, we go to S1 (starting fresh with that single bit); if it's `1`, we go to S0 (nothing matched).
+- None of the 8 bits from the detected sequence `00010111` are counted as part of the next potential match.
+
+For example, if the input stream is `000101110001 0111...`, after detecting the first `00010111`, the FSM goes to S0 (or S1) and must receive a complete fresh `00010111` to detect again.
+
+---
+
+# Part 2: Overlapping Sequence Detector
+
+## Key Difference from Non-Overlapping
+
+In the overlapping detector, after a successful detection, the FSM checks whether any **suffix** of the detected pattern `00010111` matches a **prefix** of the pattern. Bits from the tail end of a detected sequence **can** be reused as the beginning of a new detection.
+
+### Suffix-Prefix Analysis of `00010111`
+
+Let's check which suffixes of `00010111` are prefixes of `00010111`:
+
+| Suffix | Prefix Match? | Length |
+|--------|:---:|:---:|
+| `1` | No (P starts with `0`) | — |
+| `11` | No | — |
+| `111` | No | — |
+| `0111` | No (`0111` vs `0001`) | — |
+| `10111` | No | — |
+| `010111` | No (`010111` vs `000101`) | — |
+| `0010111` | No (`0010111` vs `0001011`) | — |
+
+**None** of the proper suffixes of `00010111` match a prefix of `00010111`.
+
+This means that for this specific pattern, after a detection, there is **no** overlap possible using bits from the detected sequence itself. However, the overlapping detector must still handle the **incoming bit** at the detection state differently in general — and more importantly, the transitions on **mismatch** during partial matching should also correctly account for overlap.
+
+Wait — the difference between overlapping and non-overlapping is actually about what happens after detection at S8. But there's a subtlety: the transitions from S8 in the **overlapping** case should consider the last bit received PLUS the suffix of the already-consumed string, not just start fresh.
+
+For the overlapping detector, from S8 (having just matched `00010111`), on the next bit:
+- We need to find the longest suffix of `00010111` + new_bit that matches a prefix of `00010111`.
+
+**From S8, X=0:** String consumed ending with `001011110`. Check suffixes:
+- `0` → matches P[0]. 
+- `10` → no
+- `110` → no
+- `1110` → no  
+Longest match: `0` → **S1**
+
+**From S8, X=1:** String consumed ending with `001011111`. Check suffixes:
+- `1` → no
+Longest match: none → **S0**
+
+These turn out to be the same as S0's transitions and also the same as the non-overlapping case!
+
+### But wait — there IS a difference
+
+The key difference between overlapping and non-overlapping detectors is more nuanced. Let me reconsider.
+
+In a **non-overlapping** detector: After detection, reset to S0, treating the next input bit as the start of a brand new search. The transitions from S8 happen to mimic S0.
+
+In an **overlapping** detector: After detection, transition to whatever state reflects the longest suffix of ALL bits consumed so far (including the detected pattern) that forms a valid prefix of the target pattern.
+
+For this specific pattern `00010111`, the suffix-prefix analysis shows no overlap in the pattern itself. But the key difference can still manifest in how we handle **mismatches** during the matching process — actually, no. The mismatch transitions (from S1–S7 on wrong inputs) should be the **same** for both overlapping and non-overlapping detectors. The mismatch handling always uses the suffix-prefix logic regardless.
+
+Actually, upon careful reflection, the standard distinction is:
+
+- **Non-overlapping:** After S8 (detection), force transition to S0, regardless of suffix analysis. Do not let any bit from the detected pattern seed the next match.
+- **Overlapping:** After S8 (detection), apply the suffix-prefix analysis to determine the proper state. Allow bits from the detected pattern to seed the next match.
+
+For pattern `00010111`, since no proper suffix of the full pattern is also a prefix, both detectors transition from S8 identically. The **transitions from all other states are also identical** because the suffix-prefix logic applies to mismatch recovery in both designs.
+
+However, to illustrate the **conceptual and structural difference**, consider the following: imagine the pattern were `00100100` where the suffix `00100` matches the prefix `00100`. In that case, the overlapping detector would go to S5 after detection, while the non-overlapping would go to S0.
+
+### For `00010111` specifically
+
+Even though the S8 transitions are the same, there **can** be a difference due to the bit received at S8 being "processed" vs. "ignored." Let me think again very carefully.
+
+Non-overlapping approach: At S8, we've detected the pattern. For the **next** clock, we conceptually "start over." The new bit arriving is treated as bit 1 of a potential new pattern, but none of the 8 bits of the detected pattern contribute. Since transitions from S8 mimic S0 (X=0→S1, X=1→S0), this is consistent.
+
+Overlapping approach: At S8, we've detected the pattern, and we consider ALL consumed bits. The new bit is appended to the history, and we find the longest suffix matching a prefix of the target.
+
+For **this particular pattern**, the result is identical. But to properly answer the question, I'll show both FSMs, noting that for `00010111` they are **identical** because no suffix of the pattern is also a prefix, and explain how they would differ for a pattern with overlap.
+
+Actually, let me recheck. There IS potentially a difference. Let me look at the string ending at S8 more carefully. 
+
+At S8, the last 8 bits consumed were `00010111`. Now consider the overlapping case. Could we have a situation where a longer stream context matters? For instance, what if before the pattern, there were leading zeros? Like: `0 0 0 0 1 0 1 1 1`. Here the 8-bit pattern starts at position 1, giving `00010111` at positions 1-8. But wait, the S3 self-loop handles multiple leading zeros, so after three or more zeros followed by `10111`, the FSM correctly reaches S8.
+
+The question is about what happens **after** S8. Since none of the suffixes of `00010111` match a prefix of `00010111`, both FSMs behave identically from S8.
+
+**However**, I realize there could be a more subtle difference. In the non-overlapping detector, after detection, we conceptually discard even the "incidental" suffix matches. But since transitions from S8 in the non-overlapping case already go to S0 (or S1 on X=0), and the overlapping case also goes to S0 (or S1 on X=0) based on suffix analysis, they're the same.
+
+Let me verify with a concrete example:
+
+Input stream: `000101110 0010111...`
+
+**Non-overlapping:**
+- `0`→S1, `0`→S2, `0`→S3, `1`→S4, `0`→S5, `1`→S6, `1`→S7, `1`→S8 (Z=1)
+- Next `0`: S8→S1 (treating as fresh start, `0` matches P[0])
+- Next `0`: S1→S2
+- Next `0`: S2→S3
+- Next `1`: S3→S4
+- Next `0`: S4→S5
+- Next `1`: S5→S6
+- Next `1`: S6→S7
+- Next `1`: S7→S8 (Z=1) ✓
+
+**Overlapping:** Same behavior because the `0` after the first detection only carries forward as a single `0` (S1), which is the same in both cases.
+
+Now let me try to find a case where they'd differ IF the pattern had overlap. Consider the hypothetical pattern `010010` (where suffix `010` = prefix `010`).
+- Non-overlapping: After detection, S0. If next bit is `0`, go to S1 (matched `0`).
+- Overlapping: After detection (last 6 bits = `010010`), suffix `010` matches prefix, so go to S3 (matched `010`). This is different!
+
+Back to `00010111`: No such overlap exists, so both FSMs are identical.
+
+### How to present this
+
+I'll present the overlapping FSM, note that for this pattern it happens to be identical to the non-overlapping one, and thoroughly explain why and how they would differ.
+
+## State Definitions (Overlapping — same as non-overlapping for this pattern)
+
+| State | Meaning |
+|-------|---------|
+| **S0** | No bits of the pattern matched |
+| **S1** | Received `0` |
+| **S2** | Received `00` |
+| **S3** | Received `000` |
+| **S4** | Received `0001` |
+| **S5** | Received `00010` |
+| **S6** | Received `000101` |
+| **S7** | Received `0001011` |
+| **S8** | Received `00010111` — detection! Z=1 |
+
+## Complete State Table (Overlapping)
+
+| Current State | Bits Matched | X=0 Next State | X=1 Next State | Z |
+|:---:|:---|:---:|:---:|:---:|
+| **S0** | None | S1 | S0 | 0 |
+| **S1** | `0` | S2 | S0 | 0 |
+| **S2** | `00` | S3 | S0 | 0 |
+| **S3** | `000` | S3 | S4 | 0 |
+| **S4** | `0001` | S5 | S0 | 0 |
+| **S5** | `00010` | S2 | S6 | 0 |
+| **S6** | `000101` | S1 | S7 | 0 |
+| **S7** | `0001011` | S1 | S8 | 0 |
+| **S8** | `00010111` (detected!) | S1 | S0 | **1** |
+
+## FSM Diagram (Overlapping)
+
+```
+                         X=1 (loop)
+                        ┌──────┐
+                        │      ▼
+    Reset ──────────► [ S0 ] (Z=0)
+                        │
+                        │ X=0
+                        ▼
+                      [ S1 ] (Z=0) ──── X=1 ────► [ S0 ]
+                        │
+                        │ X=0
+                        ▼
+                      [ S2 ] (Z=0) ──── X=1 ────► [ S0 ]
+                        │
+                        │ X=0
+                        ▼              X=0
+                      [ S3 ] (Z=0) ◄──────┐
+                        │                  │(self-loop)
+                        │ X=1              
+                        ▼
+                      [ S4 ] (Z=0) ──── X=1 ────► [ S0 ]
+                        │
+                        │ X=0
+                        ▼
+                      [ S5 ] (Z=0) ──── X=0 ────► [ S2 ]
+                        │
+                        │ X=1
+                        ▼
+                      [ S6 ] (Z=0) ──── X=0 ────► [ S1 ]
+                        │
+                        │ X=1
+                        ▼
+                      [ S7 ] (Z=0) ──── X=0 ────► [ S1 ]
+                        │
+                        │ X=1
+                        ▼
+                      [ S8 ] (Z=1) ──── X=0 ────► [ S1 ]
+                            │
+                            │ X=1
+                            ▼
+                          [ S0 ]
+```
+
+## Comparison and Explanation of Differences
+
+### States that differ between the two FSMs:
+
+**For the pattern `00010111`, no states differ.** Both FSMs are structurally identical. This is because the pattern `00010111` has **no proper suffix that is also a prefix of itself**:
+
+| Suffix of `00010111` | Matches prefix? |
+|---|---|
+| `1` | No (pattern starts with `0`) |
+| `11` | No |
+| `111` | No |
+| `0111` | No (prefix `0001` ≠ `0111`) |
+| `10111` | No |
+| `010111` | No |
+| `0010111` | No (prefix `0001011` ≠ `0010111`) |
+
+Since there is no overlap in the pattern itself, the suffix-prefix analysis from S8 yields the same result as a fresh start from S0.
+
+### The ONLY state that COULD differ is S8:
+
+| | Non-Overlapping S8 | Overlapping S8 |
+|---|---|---|
+| **Transition rule** | Always go to S0 (ignore suffix-prefix), then process new bit | Apply suffix-prefix analysis on `00010111` + new bit |
+| **X=0** | → S1 (S0 + `0`) | → S1 (longest suffix `0` matches prefix) |
+| **X=1** | → S0 (S0 + `1`) | → S0 (no suffix matches a prefix) |
+| **Result** | Same | Same |
+
+### When would they differ?
+
+If the pattern were, for example, `00100100`, the suffix `00100` (5 bits) matches the prefix `00100`. Then:
+- **Overlapping S8:** Would transition to S5 (carrying forward 5 matched bits)
+- **Non-Overlapping S8:** Would transition to S0 (discarding everything)
+
+### How the non-overlapping FSM prevents bit reuse:
+
+After reaching S8 (detection), the non-overlapping FSM **resets its matching context to S0**. The transitions from S8 are defined to be identical to those from S0. This means:
+- The 8 bits that formed the detected pattern are completely "consumed" and discarded.
+- Only the new incoming bit (arriving on the clock edge that exits S8) can begin a new pattern match.
+- No portion of the detected sequence `00010111` can serve as the start of the next detection.
+
+### How the overlapping FSM allows bit reuse:
+
+After reaching S8 (detection), the overlapping FSM examines the **longest suffix** of the consumed string (including the detected pattern) that matches a **prefix** of the target pattern. It transitions to the state corresponding to that prefix length. This means:
+- Bits from the tail of the detected pattern can "double count" as the beginning of a new match.
+- The FSM doesn't discard matching context — it preserves it.
+- For `00010111`, this mechanism provides no benefit because no suffix is a valid prefix, but the **principle** is that the FSM carries forward all useful context.
+
+### When Z becomes 1 and why it remains high for exactly one clock cycle:
+
+**Z becomes 1** when the FSM enters state S8. This happens on the rising clock edge where:
+1. The FSM is currently in state S7 (7 of 8 bits matched), AND
+2. The input X=1 (the 8th bit matches P[7]=1)
+
+The FSM transitions S7→S8, and since Z is a Moore output tied to state S8, **Z=1 immediately** on that clock cycle.
+
+**Z remains high for exactly one clock cycle** because:
+1. S8 is the only state with Z=1.
+2. On the very next rising clock edge, the FSM transitions out of S8 — to either S0 (if X=1) or S1 (if X=0).
+3. Both S0 and S1 have Z=0.
+4. Therefore, Z=1 lasts for exactly the one clock period that the FSM resides in S8.
+
+---
+
+## Summary Comparison Table
+
+| Feature | Non-Overlapping | Overlapping |
+|---------|:-:|:-:|
+| Number of states | 9 (S0–S8) | 9 (S0–S8) |
+| States S0–S7 transitions | Identical | Identical |
+| S8 transition logic | Reset to S0 behavior | Suffix-prefix analysis |
+| S8 transitions for `00010111` | X=0→S1, X=1→S0 | X=0→S1, X=1→S0 |
+| **Are they identical for this pattern?** | **YES** | **YES** |
+| Bit reuse after detection | Never | When suffix=prefix (none here) |
+| Z output | 1 only in S8 | 1 only in S8 |
+| Z duration | Exactly 1 clock cycle | Exactly 1 clock cycle |
+
+### Final Note
+
+The two FSMs are **functionally identical** for the pattern `00010111` because this pattern has no autocorrelation (no proper suffix equals a proper prefix). The conceptual difference — resetting vs. carrying forward matching context — produces the same state transitions for this particular pattern. For patterns with self-overlap (like `01010`, `10110`, or `00100100`), the overlapping detector would have different transitions from the detection state, potentially detecting patterns sooner in sequences like `0001011100010111` where the end of one instance feeds into the beginning of another (though for this specific pattern, that cannot happen).
