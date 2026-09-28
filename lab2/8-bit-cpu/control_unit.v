@@ -16,7 +16,7 @@ module control_unit (
     output reg        phase
 );
 
-    localparam OP_NOP  = 4'h0;
+    localparam OP_INA  = 4'h0;   // was NOP
     localparam OP_LDA  = 4'h1;
     localparam OP_STA  = 4'h2;
     localparam OP_LDI  = 4'h3;
@@ -56,7 +56,11 @@ module control_unit (
             pc_inc  = 1'b1;
         end else begin
             case (opcode)
-                OP_NOP: ;
+                OP_INA: begin
+                    acc_load   = 1'b1;
+                    acc_src    = 2'b11;     // select input port
+                    flags_load = 1'b1;
+                end
 
                 OP_LDA: begin
                     acc_load   = 1'b1;

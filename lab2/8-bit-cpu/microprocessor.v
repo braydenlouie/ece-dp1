@@ -3,6 +3,7 @@ module microprocessor (
     input  wire       rst_n,
     output wire [7:0] rom_addr,
     input  wire [7:0] rom_data,
+    input  wire [7:0] in_port,       // NEW: input port
     output wire [7:0] out_port,
     output wire       out_valid
 );
@@ -31,21 +32,21 @@ module microprocessor (
     wire       out_load;
     wire       phase;
 
-    // Accumulator input mux
+    // Accumulator input mux (added in_port on 2'b11)
     reg [7:0] acc_in;
     always @(*) begin
         case (acc_src)
             2'b00:   acc_in = alu_result;
             2'b01:   acc_in = rf_data_out;
             2'b10:   acc_in = {4'h0, operand};
-            default: acc_in = 8'h00;
+            2'b11:   acc_in = in_port;       // NEW
         endcase
     end
 
-    // Jump address: upper nibble from PC, lower nibble from operand
+    // Jump address
     wire [7:0] pc_jump_addr = {pc_out[7:4], operand};
 
-    // Flags input: ALU flags for ALU ops, computed flags for LDA/LDI
+    // Flags input
     wire z_in = (acc_src == 2'b00) ? alu_zero : (acc_in == 8'h00);
     wire c_in = (acc_src == 2'b00) ? alu_carry : c_flag;
 
@@ -93,7 +94,7 @@ module microprocessor (
         .clk         (clk),
         .rst_n       (rst_n),
         .rf_write    (rf_write),
-        .rf_addr     (operand[2:0]),     // 3-bit address
+        .rf_addr     (operand[2:0]),
         .rf_data_in  (acc_out),
         .rf_data_out (rf_data_out)
     );
